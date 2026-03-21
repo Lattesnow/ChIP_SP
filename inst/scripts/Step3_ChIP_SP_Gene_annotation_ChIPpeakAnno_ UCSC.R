@@ -1,105 +1,89 @@
-library(EnsDb.Hsapiens.v75)  
-library(ChIPpeakAnno) 
-library(org.Hs.eg.db) 
-library(AnnotationDbi)  
-library(TxDb.Hsapiens.UCSC.hg19.knownGene)
-library(GenomicRanges)
-library(dplyr)
+suppressPackageStartupMessages({
+  library(ChIPpeakAnno)
+  library(GenomicRanges)
+  library(dplyr)
+  library(org.Hs.eg.db)
+  library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+  library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+  library(AnnotationDbi)
+})
 
-# Import the output from ChIP-seq peak calling
-bed <- read.delim("r1881_hg19_test_peaks_ChIP.xls", sep = "\t")
+# Decide the reference genome
+BINDING_BP <- 5000
+REF_GENOME <- "hg38"   # <- default
 
-if (!all(c("chr", "start", "end", "pileup", "fold_enrichment") %in% colnames(bed))) {
-  stop("Required columns (chr, start, end, pileup, fold_enrichment) not found in the input file.")
+stopifnot(REF_GENOME %in% c("hg19", "hg38"))
+
+txdb <- switch(
+  REF_GENOME,
+  hg19 = TxDb.Hsapiens.UCSC.hg19.knownGene,
+  hg38 = TxDb.Hsapiens.UCSC.hg38.knownGene
+)
+
+annoData <- toGRanges(txdb, feature = "gene")
+
+# annotate peak table
+annotate_peak_table <- function(df, has_score = FALSE, out_csv) {
+  req <- c("chr", "start", "end", "pileup")
+  if (has_score) req <- c(req, "score")
+  if (!all(req %in% colnames(df))) {
+    stop("Required columns missing: ", paste(setdiff(req, colnames(df)), collapse = ", "))
+  }
+  
+  gr <- GRanges(
+    seqnames = df$chr,
+    ranges   = IRanges(start = df$start, end = df$end),
+    pileup   = df$pileup
+  )
+  if (has_score) mcols(gr)$score <- df$score
+  
+  anno <- annotatePeakInBatch(
+    gr,
+    AnnotationData = annoData,
+    output = "both",
+    bindingRegion = c(-BINDING_BP, BINDING_BP)
+  )
+  
+  anno <- addGeneIDs(
+    anno,
+    "org.Hs.eg.db",
+    IDs2Add = "symbol",
+    feature_id_type = "entrez_id"
+  )
+  
+  anno_df <- as.data.frame(anno)
+  
+  # merge back pileup/score columns
+  gr_df <- as.data.frame(gr)[, c("seqnames", "start", "end", "pileup", if (has_score) "score")]
+  anno_df <- merge(anno_df, gr_df, by = c("seqnames", "start", "end"), all.x = TRUE)
+  
+
+  pileup_col <- intersect(c("pileup", "pileup.x", "pileup.y"), colnames(anno_df))[1]
+  if (is.na(pileup_col)) stop("No pileup column found after merge().")
+  
+  anno_df <- anno_df %>%
+    filter(!is.na(symbol) & symbol != "") %>%
+    arrange(desc(.data[[pileup_col]])) %>%
+    mutate(rank = dense_rank(-.data[[pileup_col]]))
+  
+  
+  write.csv(anno_df, file = out_csv, row.names = FALSE, quote = FALSE)
+  message("Wrote: ", out_csv)
+  invisible(anno_df)
 }
 
-# Convert peak data to GRanges object
-ChIP_GR <- GRanges(seqnames = bed$chr,
-              ranges = IRanges(start = bed$start, end = bed$end),
-              pileup = bed$pileup,
-              fold_enrichment = bed$fold_enrichment)  
+# 1) Conventional ChIP peaks
+bed <- read.delim("Combined_ChIP.xls", sep = "\t", stringsAsFactors = FALSE)
+annotate_peak_table(
+  df = bed,
+  has_score = FALSE,
+  out_csv = "ChIP_anno_genes_upAdown_UCSC_Control.csv"
+)
 
-# Create annotation data from UCSC hg19
-annoData <- toGRanges(TxDb.Hsapiens.UCSC.hg19.knownGene, feature = "gene")
-
-overlaps.annoA <- annotatePeakInBatch(ChIP_GR, 
-                                      AnnotationData = annoData, 
-                                      output = "both",
-                                      bindingRegion = c(-5000, 5000))
-
-overlaps.annoA <- addGeneIDs(overlaps.annoA,
-                             "org.Hs.eg.db",
-                             IDs2Add = "symbol",
-                             feature_id_type = "entrez_id")
-
-overlaps.annoA.df <- as.data.frame(overlaps.annoA)
-
-overlaps.annoA.df <- merge(overlaps.annoA.df, 
-                           as.data.frame(ChIP_GR)[, c("seqnames", "start", "end", "pileup", "fold_enrichment")], 
-                           by = c("seqnames", "start", "end"), 
-                           all.x = TRUE)
-
-overlaps.annoA.df <- overlaps.annoA.df %>%
-  filter(!is.na(symbol)) 
-
-overlaps.annoA.df <- overlaps.annoA.df %>%
-  arrange(desc(pileup.x)) %>%  
-  mutate(rank = dense_rank(desc(pileup.x)))  
-
-# Save
-write.csv(overlaps.annoA.df, 
-            file = "ChIP_anno_genes_5Kup5Kdown_UCSC_Both_Control.csv", 
-            sep = "/t", 
-            row.names = FALSE, 
-            quote = FALSE)
-
-
-# Import ChIPSP file
-
-ChIP_SP_bed <- read.delim("final_ranked_output.xls", sep = "\t")
-
-if (!all(c("chr", "start", "end", "pileup", "score") %in% colnames(ChIP_SP_bed))) {
-  stop("Required columns (chr, start, end, pileup, score) not found in the input file.")
-}
-
-# Convert peak data to GRanges object
-ChIP_SP_GR <- GRanges(seqnames = ChIP_SP_bed$chr,
-                      ranges = IRanges(start = ChIP_SP_bed$start, end = ChIP_SP_bed$end),
-                      pileup = ChIP_SP_bed$pileup,
-                      score = ChIP_SP_bed$score)  
-
-# Create annotation data from UCSC hg19
-annoData <- toGRanges(TxDb.Hsapiens.UCSC.hg19.knownGene, feature = "gene")
-
-overlaps.annoB <- annotatePeakInBatch(ChIP_SP_GR, 
-                                      AnnotationData = annoData, 
-                                      output = "both",
-                                      bindingRegion = c(-5000, 5000))
-
-overlaps.annoB <- addGeneIDs(overlaps.annoB,
-                             "org.Hs.eg.db",
-                             IDs2Add = "symbol",
-                             feature_id_type = "entrez_id")
-
-overlaps.annoB.df <- as.data.frame(overlaps.annoB)
-
-overlaps.annoB.df <- merge(overlaps.annoB.df, 
-                           as.data.frame(ChIP_SP_GR)[, c("seqnames", "start", "end", "pileup", "score")], 
-                           by = c("seqnames", "start", "end"), 
-                           all.x = TRUE)
-
-overlaps.annoB.df <- overlaps.annoB.df %>%
-  arrange(desc(pileup.x)) %>%  
-  mutate(rank = dense_rank(desc(pileup.x)))  
-
-overlaps.annoB.df <- overlaps.annoB.df %>%
-  filter(!is.na(symbol)) 
-
-# Save
-write.csv(overlaps.annoB.df, 
-          file = "ChIP_anno_genes_5Kup5Kdown_UCSC_Both_CHIPSP.csv", 
-          sep = "/t", 
-          row.names = FALSE, 
-          quote = FALSE)
-
-
+# 2) ChIP-SP peaks
+chipsp <- read.delim("final_ranked_output.xls", sep = "\t", stringsAsFactors = FALSE)
+annotate_peak_table(
+  df = chipsp,
+  has_score = TRUE,
+  out_csv = "ChIP_anno_genes_upAdown_UCSC_CHIPSP.csv"
+)

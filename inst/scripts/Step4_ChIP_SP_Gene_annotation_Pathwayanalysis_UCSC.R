@@ -1,5 +1,4 @@
 # ChIP_SP gene annotation Pathway analysis
-# IF KEGG showing no enrichment, please try https://maayanlab.cloud/Enrichr/
 library(clusterProfiler)
 library(org.Hs.eg.db)  
 library(enrichplot)    
@@ -7,9 +6,9 @@ library(ReactomePA)
 library(ggplot2)
 
 # Import ChIP_SP genes
-tab <- read.delim("List of ChIP and ChIPSP identified genes.xls")
+tab_ChIP <- read.csv("ChIP_anno_genes_upAdown_UCSC_Control.csv")
 
-gene_list_ChIP <- tab$ChIP
+gene_list_ChIP <- unique(tab_ChIP$symbol)
 
 # Convert gene symbols to Entrez IDs
 gene_entrez_ids <- bitr(gene_list_ChIP, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
@@ -98,17 +97,29 @@ reactome_plot <- dotplot(reactome,
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 # Save
-ggsave("go_bp_plot_ChIP.png", plot = go_bp_plot, width = 8, height = 6, dpi = 1200)
-ggsave("go_cc_plot_ChIP.png", plot = go_cc_plot, width = 8, height = 6, dpi = 1200)
-ggsave("go_mf_plot_ChIP.png", plot = go_mf_plot, width = 8, height = 6, dpi = 1200)
-ggsave("kegg_plot_ChIP.png", plot = kegg_plot, width = 8, height = 6, dpi = 1200)
-ggsave("reactome_plot_ChIP.png", plot = reactome_plot, width = 8, height = 6, dpi = 1200)
+out_dir <- "GO_KEGG_Reactome_Plots_ChIP"
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
+ggsave(file.path(out_dir, "go_bp_plot_ChIP.png"),
+       plot = go_bp_plot, width = 8, height = 6, dpi = 1200)
+
+ggsave(file.path(out_dir, "go_cc_plot_ChIP.png"),
+       plot = go_cc_plot, width = 8, height = 6, dpi = 1200)
+
+ggsave(file.path(out_dir, "go_mf_plot_ChIP.png"),
+       plot = go_mf_plot, width = 8, height = 6, dpi = 1200)
+
+ggsave(file.path(out_dir, "kegg_plot_ChIP.png"),
+       plot = kegg_plot, width = 8, height = 6, dpi = 1200)
+
+ggsave(file.path(out_dir, "reactome_plot_ChIP.png"),
+       plot = reactome_plot, width = 8, height = 6, dpi = 1200)
 
 
 #ChIP_SP
+tab_CHIPSP <- read.csv("ChIP_anno_genes_upAdown_UCSC_CHIPSP.csv")
 
-gene_list_ChIP_SP <- tab$ChIP_SP
+gene_list_ChIP_SP <- unique(tab_CHIPSP$symbol)
 
 # Convert gene symbols to Entrez IDs
 gene_entrez_ids <- bitr(gene_list_ChIP_SP, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
@@ -203,8 +214,20 @@ print(head(kegg))
 print(head(reactome))
 
 # Save
-ggsave("go_bp_plot_ChIP_SP.png", plot = go_bp_plot, width = 8, height = 6, dpi = 1200)
-ggsave("go_cc_plot_ChIP_SP.png", plot = go_cc_plot, width = 8, height = 6, dpi = 1200)
-ggsave("go_mf_plot_ChIP_SP.png", plot = go_mf_plot, width = 8, height = 6, dpi = 1200)
-ggsave("kegg_plot_ChIP_SP.png", plot = kegg_plot, width = 8, height = 6, dpi = 1200)
-ggsave("reactome_plot_ChIP_SP.png", plot = reactome_plot, width = 8, height = 6, dpi = 1200)
+out_dir <- "GO_KEGG_Reactome_Plots_ChIP_SP"
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+ggsave(file.path(out_dir, "go_bp_plot_ChIP_SP.png"),
+       plot = go_bp_plot, width = 8, height = 6, dpi = 1200)
+
+ggsave(file.path(out_dir, "go_cc_plot_ChIP_SP.png"),
+       plot = go_cc_plot, width = 8, height = 6, dpi = 1200)
+
+ggsave(file.path(out_dir, "go_mf_plot_ChIP_SP.png"),
+       plot = go_mf_plot, width = 8, height = 6, dpi = 1200)
+
+ggsave(file.path(out_dir, "kegg_plot_ChIP_SP.png"),
+       plot = kegg_plot, width = 8, height = 6, dpi = 1200)
+
+ggsave(file.path(out_dir, "reactome_plot_ChIP_SP.png"),
+       plot = reactome_plot, width = 8, height = 6, dpi = 1200)
