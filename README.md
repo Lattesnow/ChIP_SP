@@ -112,7 +112,7 @@ chipsp_results <- chipSPLink(
 
 Downstream annotation and enrichment analyses are not part of the package API. Reference scripts are provided in `inst/scripts/`.
 
-These include scripts such as `Step0_ChIP_SP_Remove_XY_Chromosomes.R`, `Step3_ChIP_SP_Gene_annotation_ChIPpeakAnno_UCSC.R`, `Step4_ChIP_SP_Gene_annotation_Pathwayanalysis_UCSC.R`, `Step5_ChIP_SP_Gene_annotation_KEGG_ChEA_UCSC.R`, and `Step6_ClusterGVis_ChIP_SP_Loop.R`.
+These include scripts such as `Step1_ChIP_SP_Remove_XY_Chromosomes.R`, 'Step2_concatenate_multiple_HiCfiles.R', 'Step3_ChIP_SP_R_RankingScore.R', `Step4_ChIP_SP_Gene_annotation_ChIPpeakAnno_UCSC.R`, `Step5_EnrichR_GO_Hallmark_KEGG_Reactome.R`, and `Step6_ClusterGVis_ChIP_SP_Loop.R`.
 
 These scripts can be used as templates for ChIPpeakAnno-based gene annotation, pathway enrichment analysis, KEGG and ChEA enrichment, UCSC Genome Browser preparation, and ClusterGVis-based visualization.
 
