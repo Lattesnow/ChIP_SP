@@ -26,7 +26,7 @@ devtools::install_github("Lattesnow/ChIP_SP")
 Then load the package with:
 
 ```r
-library(ChIP_SP)
+library(ChIPSP)
 ```
 
 ## Current Package Functions
@@ -50,7 +50,7 @@ Step 0 is an optional preprocessing step for removing chromosome X and chromosom
 Example:
 
 ```r
-library(ChIP_SP)
+library(ChIPSP)
 
 hic_df_filtered <- removeXYChromosomes(hic_df, chr_col = "chr")
 ```
@@ -60,7 +60,7 @@ Step 1 merges Hi-C loop outputs across replicates and resolutions. The `mergeHiC
 Example:
 
 ```r
-library(ChIP_SP)
+library(ChIPSP)
 
 hic_files <- list.files(
   pattern = "HiC\\.xls$",
@@ -93,7 +93,7 @@ The output is a ranked `data.frame` containing ChIP-SP integrated spatial regula
 A typical minimal workflow is:
 
 ```r
-library(ChIP_SP)
+library(ChIPSP)
 
 hic_files <- list.files(pattern = "HiC\\.xls$", full.names = TRUE)
 hic_df <- mergeHiCLoops(hic_files)
