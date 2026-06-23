@@ -4,7 +4,7 @@
 
 `ChIP_SP` is an R package implementing the core **ChIP-SP** algorithm for integrating **ChIP-seq transcription factor binding** with **Hi-C chromatin interaction** data to identify spatially linked regulatory regions.
 
-The package is designed to provide the core computational engine for ChIP-SP analysis: **Step 0**, optional removal of sex chromosomes (`chrX`, `chrY`); **Step 1**, merging Hi-C loop outputs across replicates and resolutions; and **Step 2**, spatial linking of ChIP-seq peaks to distal Hi-C loop anchors and ranking interactions.
+The package is designed to provide the core computational engine for ChIP-SP analysis: **Step 1**, optional removal of sex chromosomes (`chrX`, `chrY`); **Step 2**, merging Hi-C loop outputs across replicates and resolutions; and **Step 3**, spatial linking of ChIP-seq peaks to distal Hi-C loop anchors and ranking interactions.
 
 Downstream analyses, including **gene annotation**, **pathway enrichment**, and **visualization**, are intentionally excluded from the package API and are instead provided as reference R scripts in `inst/scripts/`. This design allows users full flexibility in annotation strategy and downstream interpretation.
 
@@ -45,7 +45,7 @@ ChIP-seq peak files are expected to follow the naming pattern `*ChIP.xls`. These
 
 ## Core Workflow
 
-Step 0 is an optional preprocessing step for removing chromosome X and chromosome Y from genomic interval tables before downstream analysis. This can be performed using `removeXYChromosomes()`.
+Step 1 is an optional preprocessing step for removing chromosome X and chromosome Y from genomic interval tables before downstream analysis. This can be performed using `removeXYChromosomes()`.
 
 Example:
 
@@ -55,7 +55,7 @@ library(ChIPSP)
 hic_df_filtered <- removeXYChromosomes(hic_df, chr_col = "chr")
 ```
 
-Step 1 merges Hi-C loop outputs across replicates and resolutions. The `mergeHiCLoops()` function reads Hi-C loop files and combines them into a single merged data frame.
+Step 2 merges Hi-C loop outputs across replicates and resolutions. The `mergeHiCLoops()` function reads Hi-C loop files and combines them into a single merged data frame.
 
 Example:
 
@@ -72,7 +72,7 @@ hic_df <- mergeHiCLoops(hic_files)
 
 The output is a merged `data.frame` containing Hi-C loops across all replicates and resolutions.
 
-Step 2 performs ChIP–Hi-C spatial integration and ranking. The `chipSPLink()` function takes a ChIP-seq peak file together with the merged Hi-C loop table and identifies spatially linked regulatory regions.
+Step 3 performs ChIP–Hi-C spatial integration and ranking. The `chipSPLink()` function takes a ChIP-seq peak file together with the merged Hi-C loop table and identifies spatially linked regulatory regions.
 
 Example:
 
