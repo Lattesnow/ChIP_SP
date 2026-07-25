@@ -1,48 +1,124 @@
-#' Remove sex chromosomes from a genomic data.frame
+#' Remove chrX/chrY from Hi-C loop files
 #'
-#' Filters rows corresponding to chromosome X and Y from a genomic
-#' interval data.frame. This is useful as a preprocessing step for
-#' ChIP-SP workflows when sex chromosomes should be excluded.
+#' Reads one or more Hi-C loop files, removes interactions involving
+#' chromosome X or chromosome Y, and writes cleaned files in CSV format.
+#' Supported input formats include CSV, TSV, TXT, TAB, BED, XLS, and XLSX.
+#' Chromosome columns are detected automatically.
 #'
-#' @param df A data.frame containing genomic intervals.
-#' @param chr_col Character scalar. Name of the chromosome column.
-#'   Default is `"chr"`.
-#' @param remove_chr Character vector of chromosome names to remove.
-#'   Default is `c("chrX", "chrY", "X", "Y")`.
-#' @param ignore_case Logical; whether chromosome matching should ignore case.
-#'   Default is `FALSE`.
+#' @param files Character vector of Hi-C file paths.
 #'
-#' @return A filtered data.frame with sex chromosomes removed.
+#' @return Invisibly returns a character vector containing the output file names.
 #' @export
 #'
 #' @examples
-#' x <- data.frame(
-#'   chr = c("chr1", "chrX", "chr2", "chrY"),
-#'   start = c(1, 10, 20, 30),
-#'   end = c(5, 15, 25, 35)
+#' hic_files <- list.files(
+#'   pattern = "HiC\\.(csv|tsv|txt|xls|xlsx)$",
+#'   full.names = TRUE
 #' )
-#' removeXYChromosomes(x)
-removeXYChromosomes <- function(df,
-                                chr_col = "chr",
-                                remove_chr = c("chrX", "chrY", "X", "Y"),
-                                ignore_case = FALSE) {
-  if (!is.data.frame(df)) {
-    stop("`df` must be a data.frame.")
+#'
+#' removeXYChromosomes(hic_files)
+removeXYChromosomes <- function(files) {
+
+  if (length(files) == 0)
+    stop("No Hi-C files supplied.")
+
+  output_files <- character(length(files))
+
+  for (i in seq_along(files)) {
+
+    f <- files[i]
+
+    message("Processing: ", basename(f))
+
+    ext <- tolower(tools::file_ext(f))
+
+    hic <- switch(
+      ext,
+      csv  = read.csv(f, stringsAsFactors = FALSE, check.names = FALSE),
+      tsv  = read.delim(f, stringsAsFactors = FALSE, check.names = FALSE),
+      txt  = read.delim(f, stringsAsFactors = FALSE, check.names = FALSE),
+      tab  = read.delim(f, stringsAsFactors = FALSE, check.names = FALSE),
+      bed  = read.delim(f,
+                        stringsAsFactors = FALSE,
+                        check.names = FALSE,
+                        header = FALSE),
+      xlsx = readxl::read_excel(f) |>
+        as.data.frame(check.names = FALSE),
+      xls = tryCatch(
+        readxl::read_excel(f) |>
+          as.data.frame(check.names = FALSE),
+        error = function(e)
+          read.delim(f,
+                     stringsAsFactors = FALSE,
+                     check.names = FALSE)
+      ),
+      stop("Unsupported file type: ", ext)
+    )
+
+    ## Detect chromosome columns
+    if (all(c("BIN1_CHR", "BIN2_CHR") %in% colnames(hic))) {
+
+      hic_cols <- c("BIN1_CHR", "BIN2_CHR")
+
+    } else if (all(c("BIN1_CHROMOSOME", "BIN2_CHROMOSOME") %in% colnames(hic))) {
+
+      hic_cols <- c("BIN1_CHROMOSOME", "BIN2_CHROMOSOME")
+
+    } else {
+
+      hic_cols <- intersect(
+        c("BIN1_CHR",
+          "BIN2_CHR",
+          "BIN1_CHROMOSOME",
+          "BIN2_CHROMOSOME"),
+        colnames(hic)
+      )
+    }
+
+    if (length(hic_cols) == 0) {
+      warning("No chromosome columns detected in ", basename(f))
+      next
+    }
+
+    xy_regex <- "^(chr)?[XY]$"
+
+    keep <- apply(
+      hic[, hic_cols, drop = FALSE],
+      1,
+      function(x) {
+        x <- trimws(as.character(x))
+        !any(grepl(xy_regex,
+                   x,
+                   ignore.case = TRUE) &
+               !is.na(x))
+      }
+    )
+
+    removed <- sum(!keep)
+
+    message("Removed ", removed, " interactions on chrX/chrY")
+
+    hic_clean <- hic[keep, , drop = FALSE]
+
+    out_file <- file.path(
+      dirname(f),
+      paste0(
+        tools::file_path_sans_ext(basename(f)),
+        "_no_chrX_chrY.csv"
+      )
+    )
+
+    write.csv(
+      hic_clean,
+      out_file,
+      row.names = FALSE,
+      quote = FALSE
+    )
+
+    message("Saved: ", basename(out_file))
+
+    output_files[i] <- out_file
   }
-  
-  if (!chr_col %in% colnames(df)) {
-    stop("`chr_col` not found in `df`: ", chr_col)
-  }
-  
-  chr_vals <- as.character(df[[chr_col]])
-  
-  if (ignore_case) {
-    keep <- !(tolower(chr_vals) %in% tolower(remove_chr))
-  } else {
-    keep <- !(chr_vals %in% remove_chr)
-  }
-  
-  out <- df[keep, , drop = FALSE]
-  rownames(out) <- NULL
-  out
+
+  invisible(output_files)
 }
