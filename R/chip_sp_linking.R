@@ -13,6 +13,11 @@
 #' score = normalized\ pileup - normalized\ FDR
 #' }
 #'
+#' Duplicate projected rows are removed independently within the BIN1
+#' projection process and within the BIN2 projection process. Identical
+#' rows produced independently by BIN1 and BIN2 are retained as separate
+#' output rows.
+#'
 #' The function uses \code{data.table::foverlaps()} for efficient genomic
 #' interval matching and avoids construction of a full Cartesian product.
 #'
@@ -45,15 +50,16 @@
 #'   \item \code{chr}, \code{start}, and \code{end}: partner-anchor coordinates;
 #'   \item \code{pileup}: ChIP-seq peak signal;
 #'   \item \code{FDR}: Hi-C loop confidence;
+#'   \item \code{source_anchor}: loop anchor overlapped by the ChIP-seq peak;
 #'   \item \code{pileup_norm}: min-max normalized pileup;
 #'   \item \code{fdr_norm}: min-max normalized FDR;
 #'   \item \code{score}: final ChIP-SP ranking score;
-#'   \item \code{source_anchor}: loop anchor overlapped by the ChIP-seq peak.
+#'   \item \code{rank}: descending rank based on ChIP-SP score.
 #' }
 #'
 #' @examples
 #' hic_files <- list.files(
-#'   pattern = "HiC\\.(csv|tsv|txt)$",
+#'   pattern = "HiC.*\\.(csv|tsv|txt|tab|xls|xlsx)$",
 #'   full.names = TRUE,
 #'   ignore.case = TRUE
 #' )
@@ -69,18 +75,24 @@
 #' head(result)
 #'
 #' @export
-chipSPLink <- function(chip_file,
-                       hic_df,
-                       fdr_cutoff = 0.05,
-                       overlap_mode = "any",
-                       add_chr_prefix = TRUE) {
+chipSPLink <- function(
+    chip_file,
+    hic_df,
+    fdr_cutoff = 0.05,
+    overlap_mode = "any",
+    add_chr_prefix = TRUE) {
 
   # ----------------------------------------------------------
   # 1. Validate inputs
   # ----------------------------------------------------------
 
-  if (length(chip_file) != 1 || !is.character(chip_file)) {
-    stop("`chip_file` must be a single file path.")
+  if (
+    !is.character(chip_file) ||
+      length(chip_file) != 1L ||
+      is.na(chip_file) ||
+      chip_file == ""
+  ) {
+    stop("`chip_file` must be one valid file path.")
   }
 
   if (!file.exists(chip_file)) {
@@ -90,7 +102,7 @@ chipSPLink <- function(chip_file,
   if (!is.data.frame(hic_df)) {
     stop(
       "`hic_df` must be a data.frame or data.table, ",
-      "typically returned by mergeHiCLoops()."
+      "typically returned by `mergeHiCLoops()`."
     )
   }
 
@@ -102,11 +114,23 @@ chipSPLink <- function(chip_file,
     "equal"
   )
 
-  if (!overlap_mode %in% valid_overlap_modes) {
+  if (
+    !is.character(overlap_mode) ||
+      length(overlap_mode) != 1L ||
+      !overlap_mode %in% valid_overlap_modes
+  ) {
     stop(
       "`overlap_mode` must be one of: ",
       paste(valid_overlap_modes, collapse = ", ")
     )
+  }
+
+  if (
+    !is.logical(add_chr_prefix) ||
+      length(add_chr_prefix) != 1L ||
+      is.na(add_chr_prefix)
+  ) {
+    stop("`add_chr_prefix` must be TRUE or FALSE.")
   }
 
   # ----------------------------------------------------------
@@ -147,7 +171,7 @@ chipSPLink <- function(chip_file,
         data.table = TRUE
       )
 
-      if (ncol(chip) < 3) {
+      if (ncol(chip) < 3L) {
         stop("BED file must contain at least three columns.")
       }
 
@@ -157,7 +181,10 @@ chipSPLink <- function(chip_file,
         new = c("chr", "start", "end")
       )
 
-      if (ncol(chip) >= 4 && !"pileup" %in% colnames(chip)) {
+      if (
+        ncol(chip) >= 4L &&
+          !"pileup" %in% colnames(chip)
+      ) {
         data.table::setnames(
           chip,
           old = names(chip)[4],
@@ -166,6 +193,12 @@ chipSPLink <- function(chip_file,
       }
 
     } else if (extension %in% c("xls", "xlsx")) {
+
+      if (!requireNamespace("readxl", quietly = TRUE)) {
+        stop(
+          "Package `readxl` is required to read Excel files."
+        )
+      }
 
       chip <- data.table::as.data.table(
         readxl::read_excel(file)
@@ -184,29 +217,100 @@ chipSPLink <- function(chip_file,
   }
 
   chip <- read_chip_file(chip_file)
-  hic <- data.table::as.data.table(hic_df)
+
+  # data.table conversion may otherwise modify the input object by reference
+  hic <- data.table::as.data.table(
+    data.table::copy(hic_df)
+  )
 
   # ----------------------------------------------------------
-  # 3. Normalize column names
+  # 3. Normalize ChIP column names
   # ----------------------------------------------------------
 
-  if ("BIN1_CHROMOSOME" %in% colnames(hic) &&
-      !"BIN1_CHR" %in% colnames(hic)) {
-    data.table::setnames(
-      hic,
-      "BIN1_CHROMOSOME",
-      "BIN1_CHR"
+  chip_names <- trimws(colnames(chip))
+  chip_names_upper <- toupper(chip_names)
+
+  chip_name_map <- c(
+    CHR = "chr",
+    CHROM = "chr",
+    CHROMOSOME = "chr",
+    START = "start",
+    END = "end",
+    PILEUP = "pileup"
+  )
+
+  matched_chip_names <- (
+    chip_names_upper %in% names(chip_name_map)
+  )
+
+  chip_names[matched_chip_names] <- unname(
+    chip_name_map[chip_names_upper[matched_chip_names]]
+  )
+
+  data.table::setnames(
+    chip,
+    old = colnames(chip),
+    new = chip_names
+  )
+
+  duplicated_chip_names <- unique(
+    colnames(chip)[duplicated(colnames(chip))]
+  )
+
+  if (length(duplicated_chip_names) > 0L) {
+    stop(
+      "ChIP column-name normalization created duplicate columns: ",
+      paste(duplicated_chip_names, collapse = ", ")
     )
   }
 
-  if ("BIN2_CHROMOSOME" %in% colnames(hic) &&
-      !"BIN2_CHR" %in% colnames(hic)) {
-    data.table::setnames(
-      hic,
-      "BIN2_CHROMOSOME",
-      "BIN2_CHR"
+  # ----------------------------------------------------------
+  # 4. Normalize Hi-C column names
+  # ----------------------------------------------------------
+
+  hic_names <- trimws(colnames(hic))
+  hic_names_upper <- toupper(hic_names)
+
+  hic_name_map <- c(
+    BIN1_CHROMOSOME = "BIN1_CHR",
+    BIN1_CHR = "BIN1_CHR",
+    BIN1_START = "BIN1_START",
+    BIN1_END = "BIN1_END",
+    BIN2_CHROMOSOME = "BIN2_CHR",
+    BIN2_CHR = "BIN2_CHR",
+    BIN2_START = "BIN2_START",
+    BIN2_END = "BIN2_END",
+    FDR = "FDR"
+  )
+
+  matched_hic_names <- (
+    hic_names_upper %in% names(hic_name_map)
+  )
+
+  hic_names[matched_hic_names] <- unname(
+    hic_name_map[hic_names_upper[matched_hic_names]]
+  )
+
+  data.table::setnames(
+    hic,
+    old = colnames(hic),
+    new = hic_names
+  )
+
+  duplicated_hic_names <- unique(
+    colnames(hic)[duplicated(colnames(hic))]
+  )
+
+  if (length(duplicated_hic_names) > 0L) {
+    stop(
+      "Hi-C column-name normalization created duplicate columns: ",
+      paste(duplicated_hic_names, collapse = ", ")
     )
   }
+
+  # ----------------------------------------------------------
+  # 5. Validate required columns
+  # ----------------------------------------------------------
 
   required_chip_columns <- c(
     "chr",
@@ -219,7 +323,7 @@ chipSPLink <- function(chip_file,
     colnames(chip)
   )
 
-  if (length(missing_chip_columns) > 0) {
+  if (length(missing_chip_columns) > 0L) {
     stop(
       "Missing ChIP columns: ",
       paste(missing_chip_columns, collapse = ", ")
@@ -228,6 +332,7 @@ chipSPLink <- function(chip_file,
 
   if (!"pileup" %in% colnames(chip)) {
     chip[, pileup := 1]
+
     message(
       "No `pileup` column detected. ",
       "All ChIP peaks were assigned pileup = 1."
@@ -249,7 +354,7 @@ chipSPLink <- function(chip_file,
     colnames(hic)
   )
 
-  if (length(missing_hic_columns) > 0) {
+  if (length(missing_hic_columns) > 0L) {
     stop(
       "Missing Hi-C columns: ",
       paste(missing_hic_columns, collapse = ", ")
@@ -274,7 +379,7 @@ chipSPLink <- function(chip_file,
   )]
 
   # ----------------------------------------------------------
-  # 4. Convert data types
+  # 6. Convert data types
   # ----------------------------------------------------------
 
   chip[, `:=`(
@@ -294,41 +399,74 @@ chipSPLink <- function(chip_file,
     FDR = suppressWarnings(as.numeric(FDR))
   )]
 
+  # ----------------------------------------------------------
+  # 7. Remove invalid rows
+  # ----------------------------------------------------------
+
+  n_chip_before_validation <- nrow(chip)
+
   chip <- chip[
     !is.na(chr) &
-    chr != "" &
-    !is.na(start) &
-    !is.na(end) &
-    end > start &
-    !is.na(pileup)
+      chr != "" &
+      !is.na(start) &
+      !is.na(end) &
+      end > start &
+      !is.na(pileup)
   ]
+
+  n_chip_removed <- (
+    n_chip_before_validation - nrow(chip)
+  )
+
+  if (n_chip_removed > 0L) {
+    warning(
+      "Removed ",
+      n_chip_removed,
+      " invalid ChIP rows."
+    )
+  }
+
+  n_hic_before_validation <- nrow(hic)
 
   hic <- hic[
     !is.na(BIN1_CHR) &
-    BIN1_CHR != "" &
-    !is.na(BIN1_START) &
-    !is.na(BIN1_END) &
-    BIN1_END > BIN1_START &
-    !is.na(BIN2_CHR) &
-    BIN2_CHR != "" &
-    !is.na(BIN2_START) &
-    !is.na(BIN2_END) &
-    BIN2_END > BIN2_START &
-    !is.na(FDR)
+      BIN1_CHR != "" &
+      !is.na(BIN1_START) &
+      !is.na(BIN1_END) &
+      BIN1_END > BIN1_START &
+      !is.na(BIN2_CHR) &
+      BIN2_CHR != "" &
+      !is.na(BIN2_START) &
+      !is.na(BIN2_END) &
+      BIN2_END > BIN2_START &
+      !is.na(FDR)
   ]
 
+  n_hic_removed <- (
+    n_hic_before_validation - nrow(hic)
+  )
+
+  if (n_hic_removed > 0L) {
+    warning(
+      "Removed ",
+      n_hic_removed,
+      " invalid Hi-C rows."
+    )
+  }
+
   # ----------------------------------------------------------
-  # 5. Normalize chromosome prefixes
+  # 8. Normalize chromosome prefixes
   # ----------------------------------------------------------
 
   normalize_chr <- function(x) {
 
     x <- trimws(as.character(x))
 
+    missing_value <- is.na(x) | x == ""
+
     needs_prefix <- (
-      !is.na(x) &
-      x != "" &
-      !grepl("^chr", x, ignore.case = TRUE)
+      !missing_value &
+        !grepl("^chr", x, ignore.case = TRUE)
     )
 
     x[needs_prefix] <- paste0(
@@ -336,13 +474,24 @@ chipSPLink <- function(chip_file,
       x[needs_prefix]
     )
 
+    x[!missing_value] <- sub(
+      "^chr",
+      "chr",
+      x[!missing_value],
+      ignore.case = TRUE
+    )
+
     x
   }
 
   if (add_chr_prefix) {
+
     chip[, chr := normalize_chr(chr)]
-    hic[, BIN1_CHR := normalize_chr(BIN1_CHR)]
-    hic[, BIN2_CHR := normalize_chr(BIN2_CHR)]
+
+    hic[, `:=`(
+      BIN1_CHR = normalize_chr(BIN1_CHR),
+      BIN2_CHR = normalize_chr(BIN2_CHR)
+    )]
   }
 
   message(
@@ -353,16 +502,18 @@ chipSPLink <- function(chip_file,
   )
 
   # ----------------------------------------------------------
-  # 6. Filter Hi-C loops by FDR
+  # 9. Filter Hi-C loops by FDR
   # ----------------------------------------------------------
 
   if (!is.null(fdr_cutoff)) {
 
-    if (length(fdr_cutoff) != 1 ||
-        !is.numeric(fdr_cutoff) ||
+    if (
+      !is.numeric(fdr_cutoff) ||
+        length(fdr_cutoff) != 1L ||
         is.na(fdr_cutoff) ||
         !is.finite(fdr_cutoff) ||
-        fdr_cutoff < 0) {
+        fdr_cutoff < 0
+    ) {
       stop(
         "`fdr_cutoff` must be NULL or one finite ",
         "non-negative numeric value."
@@ -379,17 +530,22 @@ chipSPLink <- function(chip_file,
     nrow(hic)
   )
 
-  if (nrow(chip) == 0) {
-    stop("No valid ChIP-seq peaks remain after input processing.")
+  if (nrow(chip) == 0L) {
+    stop(
+      "No valid ChIP-seq peaks remain after input processing."
+    )
   }
 
-  if (nrow(hic) == 0) {
-    warning("No Hi-C loops remain after input processing.")
+  if (nrow(hic) == 0L) {
+    warning(
+      "No Hi-C loops remain after input processing."
+    )
+
     return(data.frame())
   }
 
   # ----------------------------------------------------------
-  # 7. Overlap ChIP peaks with BIN1 and project to BIN2
+  # 10. Overlap ChIP peaks with BIN1 and project to BIN2
   # ----------------------------------------------------------
 
   data.table::setkey(
@@ -433,7 +589,7 @@ chipSPLink <- function(chip_file,
   )]
 
   # ----------------------------------------------------------
-  # 8. Overlap ChIP peaks with BIN2 and project to BIN1
+  # 11. Overlap ChIP peaks with BIN2 and project to BIN1
   # ----------------------------------------------------------
 
   bin2 <- hic[, .(
@@ -470,14 +626,73 @@ chipSPLink <- function(chip_file,
   )]
 
   message(
-    "Projected rows from BIN1 = ",
+    "Projected rows before within-process duplicate removal: ",
+    "BIN1 = ",
     nrow(projected_from_bin1),
-    "; projected rows from BIN2 = ",
+    "; BIN2 = ",
     nrow(projected_from_bin2)
   )
 
   # ----------------------------------------------------------
-  # 9. Merge projected regions
+  # 12. Remove duplicates within each projection process
+  # ----------------------------------------------------------
+
+  n_bin1_before_deduplication <- nrow(
+    projected_from_bin1
+  )
+
+  n_bin2_before_deduplication <- nrow(
+    projected_from_bin2
+  )
+
+  projected_from_bin1 <- unique(
+    projected_from_bin1,
+    by = c(
+      "chr",
+      "start",
+      "end",
+      "pileup",
+      "FDR",
+      "source_anchor"
+    )
+  )
+
+  projected_from_bin2 <- unique(
+    projected_from_bin2,
+    by = c(
+      "chr",
+      "start",
+      "end",
+      "pileup",
+      "FDR",
+      "source_anchor"
+    )
+  )
+
+  n_bin1_removed <- (
+    n_bin1_before_deduplication -
+      nrow(projected_from_bin1)
+  )
+
+  n_bin2_removed <- (
+    n_bin2_before_deduplication -
+      nrow(projected_from_bin2)
+  )
+
+  message(
+    "BIN1 projection: removed ",
+    n_bin1_removed,
+    " within-process duplicated rows."
+  )
+
+  message(
+    "BIN2 projection: removed ",
+    n_bin2_removed,
+    " within-process duplicated rows."
+  )
+
+  # ----------------------------------------------------------
+  # 13. Merge independently generated projection sets
   # ----------------------------------------------------------
 
   final_matrix <- data.table::rbindlist(
@@ -489,15 +704,32 @@ chipSPLink <- function(chip_file,
     fill = TRUE
   )
 
-  if (nrow(final_matrix) == 0) {
+  # Do not deduplicate final_matrix.
+  #
+  # An identical row generated independently through BIN1 and BIN2
+  # must remain as two separate rows because it originated from two
+  # different projection processes.
+
+  message(
+    "Projected rows after within-process duplicate removal: ",
+    "BIN1 = ",
+    nrow(projected_from_bin1),
+    "; BIN2 = ",
+    nrow(projected_from_bin2),
+    "; combined = ",
+    nrow(final_matrix)
+  )
+
+  if (nrow(final_matrix) == 0L) {
     warning(
       "No ChIP-seq peaks overlapped retained Hi-C loop anchors."
     )
+
     return(as.data.frame(final_matrix))
   }
 
   # ----------------------------------------------------------
-  # 10. Calculate ChIP-SP ranking score
+  # 14. Calculate ChIP-SP ranking score
   # ----------------------------------------------------------
 
   normalize_01 <- function(x) {
@@ -506,7 +738,7 @@ chipSPLink <- function(chip_file,
 
     valid_values <- x[is.finite(x)]
 
-    if (length(valid_values) == 0) {
+    if (length(valid_values) == 0L) {
       return(rep(NA_real_, length(x)))
     }
 
@@ -515,10 +747,14 @@ chipSPLink <- function(chip_file,
       na.rm = TRUE
     )
 
-    if (isTRUE(all.equal(
-      value_range[1],
-      value_range[2]
-    ))) {
+    if (
+      isTRUE(
+        all.equal(
+          value_range[1],
+          value_range[2]
+        )
+      )
+    ) {
       return(rep(0, length(x)))
     }
 
@@ -526,9 +762,20 @@ chipSPLink <- function(chip_file,
       (value_range[2] - value_range[1])
   }
 
-  final_matrix[, pileup_norm := normalize_01(pileup)]
-  final_matrix[, fdr_norm := normalize_01(FDR)]
-  final_matrix[, score := pileup_norm - fdr_norm]
+  final_matrix[
+    ,
+    pileup_norm := normalize_01(pileup)
+  ]
+
+  final_matrix[
+    ,
+    fdr_norm := normalize_01(FDR)
+  ]
+
+  final_matrix[
+    ,
+    score := pileup_norm - fdr_norm
+  ]
 
   data.table::setorder(
     final_matrix,
